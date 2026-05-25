@@ -21,12 +21,13 @@ class Config:
     ]
 
     # Database path
+    # On Railway, set DATABASE_PATH=/data/bot.db (persistent volume)
     DATABASE_PATH: str = os.getenv("DATABASE_PATH", "bot_database.db")
 
     # Default scheduler interval in seconds
     DEFAULT_INTERVAL: int = int(os.getenv("DEFAULT_INTERVAL", "3600"))
 
-    # Max retry attempts for failed sends
+    # Max retry attempts for failed sends before marking permanently failed
     MAX_RETRIES: int = int(os.getenv("MAX_RETRIES", "3"))
 
     # Logging level
@@ -40,6 +41,9 @@ class Config:
 
     # Log retention days
     LOG_RETENTION_DAYS: int = int(os.getenv("LOG_RETENTION_DAYS", "7"))
+
+    # Number of items shown by /previewqueue
+    PREVIEW_COUNT: int = int(os.getenv("PREVIEW_COUNT", "3"))
 
     @classmethod
     def validate(cls) -> None:

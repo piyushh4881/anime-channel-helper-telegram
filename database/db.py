@@ -4,6 +4,9 @@ SQLite Database Layer
 Handles all persistent storage: users, message queue, stats,
 settings, and logs.  Uses synchronous sqlite3 (adequate for
 a single-owner bot with modest throughput).
+
+Migration-safe: new columns are added dynamically at startup
+without dropping or recreating tables.
 """
 
 import json
@@ -68,15 +71,23 @@ class Database:
         );
 
         CREATE TABLE IF NOT EXISTS queue (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            media_type  TEXT NOT NULL DEFAULT 'text',
-            content     TEXT,
-            caption     TEXT,
-            file_ids    TEXT,
-            parse_mode  TEXT DEFAULT 'HTML',
-            created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-            status      TEXT NOT NULL DEFAULT 'pending',
-            retry_count INTEGER NOT NULL DEFAULT 0
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            media_type      TEXT NOT NULL DEFAULT 'text',
+            content         TEXT,
+            caption         TEXT,
+            file_ids        TEXT,
+            parse_mode      TEXT DEFAULT 'HTML',
+            created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+            status          TEXT NOT NULL DEFAULT 'pending',
+            retry_count     INTEGER NOT NULL DEFAULT 0,
+            message_type    TEXT,
+            file_id         TEXT,
+            media_group_id  TEXT,
+            source_chat_id  INTEGER,
+            source_message_id INTEGER,
+            last_error      TEXT,
+            last_attempt    TEXT,
+            paused          INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS stats (
@@ -113,6 +124,43 @@ class Database:
             conn.commit()
         logger.info("Database initialised at %s", self._db_path)
 
+    def migrate(self) -> None:
+        """
+        Safe schema migration — add missing columns to existing tables
+        without destroying data. Called after initialize() on every startup.
+        """
+        with self._lock:
+            conn = self._get_conn()
+            existing = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(queue)").fetchall()
+            }
+
+        new_columns = {
+            "message_type":       "TEXT",
+            "file_id":            "TEXT",
+            "media_group_id":     "TEXT",
+            "source_chat_id":     "INTEGER",
+            "source_message_id":  "INTEGER",
+            "last_error":         "TEXT",
+            "last_attempt":       "TEXT",
+            "paused":             "INTEGER NOT NULL DEFAULT 0",
+        }
+
+        for col, col_type in new_columns.items():
+            if col not in existing:
+                try:
+                    self._execute(
+                        f"ALTER TABLE queue ADD COLUMN {col} {col_type}",
+                        commit=True,
+                    )
+                    logger.info("Migration: added column queue.%s", col)
+                except sqlite3.OperationalError as exc:
+                    # Column may have been added by another process — safe to ignore
+                    logger.debug("Migration skipped for %s: %s", col, exc)
+
+        logger.info("Database migration complete.")
+
     # ── Users ─────────────────────────────────────────────────────────────
 
     def add_user(
@@ -147,12 +195,20 @@ class Database:
         caption: Optional[str] = None,
         file_ids: Optional[list[str]] = None,
         parse_mode: str = "HTML",
+        message_type: Optional[str] = None,
+        file_id: Optional[str] = None,
+        media_group_id: Optional[str] = None,
+        source_chat_id: Optional[int] = None,
+        source_message_id: Optional[int] = None,
     ) -> int:
         """Insert a new item into the message queue. Returns the row ID."""
         cur = self._execute(
             """
-            INSERT INTO queue (media_type, content, caption, file_ids, parse_mode)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO queue (
+                media_type, content, caption, file_ids, parse_mode,
+                message_type, file_id, media_group_id,
+                source_chat_id, source_message_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 media_type,
@@ -160,14 +216,34 @@ class Database:
                 caption,
                 json.dumps(file_ids) if file_ids else None,
                 parse_mode,
+                message_type or media_type,
+                file_id or (file_ids[0] if file_ids else None),
+                media_group_id,
+                source_chat_id,
+                source_message_id,
             ),
         )
-        return cur.lastrowid  # type: ignore[return-value]
+        item_id = cur.lastrowid
+        logger.info(
+            "Queue insert: #%s type=%s media_group=%s src=%s/%s",
+            item_id, media_type, media_group_id, source_chat_id, source_message_id,
+        )
+        return item_id  # type: ignore[return-value]
+
+    def get_queue_item(self, item_id: int) -> Optional[dict]:
+        """Fetch a single queue item by ID."""
+        row = self._fetchone("SELECT * FROM queue WHERE id = ?", (item_id,))
+        if row:
+            d = dict(row)
+            if d.get("file_ids"):
+                d["file_ids"] = json.loads(d["file_ids"])
+            return d
+        return None
 
     def get_next_pending(self) -> Optional[dict]:
-        """Return the oldest pending queue item."""
+        """Return the oldest non-paused pending queue item."""
         row = self._fetchone(
-            "SELECT * FROM queue WHERE status = 'pending' ORDER BY id ASC LIMIT 1"
+            "SELECT * FROM queue WHERE status = 'pending' AND paused = 0 ORDER BY id ASC LIMIT 1"
         )
         if row:
             d = dict(row)
@@ -177,6 +253,7 @@ class Database:
         return None
 
     def get_all_pending(self) -> list[dict]:
+        """Return all pending queue items (paused or not) ordered by id."""
         rows = self._fetchall(
             "SELECT * FROM queue WHERE status = 'pending' ORDER BY id ASC"
         )
@@ -194,20 +271,73 @@ class Database:
         )
         return row["cnt"] if row else 0
 
+    def get_media_group_items(self, media_group_id: str) -> list[dict]:
+        """Return all queue items belonging to a media group."""
+        rows = self._fetchall(
+            "SELECT * FROM queue WHERE media_group_id = ? AND status = 'pending' ORDER BY id ASC",
+            (media_group_id,),
+        )
+        results = []
+        for r in rows:
+            d = dict(r)
+            if d.get("file_ids"):
+                d["file_ids"] = json.loads(d["file_ids"])
+            results.append(d)
+        return results
+
     def mark_sent(self, item_id: int) -> None:
         self._execute(
             "UPDATE queue SET status = 'sent' WHERE id = ?", (item_id,)
         )
+        logger.info("Queue item #%s marked sent", item_id)
 
-    def mark_failed(self, item_id: int) -> None:
+    def mark_failed(self, item_id: int, error: Optional[str] = None) -> None:
+        """Increment retry count; mark as 'failed' after MAX_RETRIES exceeded."""
         self._execute(
             """
-            UPDATE queue SET retry_count = retry_count + 1,
-                            status = CASE WHEN retry_count + 1 >= 3 THEN 'failed' ELSE 'pending' END
+            UPDATE queue
+            SET retry_count   = retry_count + 1,
+                last_error    = ?,
+                last_attempt  = datetime('now'),
+                status        = CASE WHEN retry_count + 1 >= 3 THEN 'failed' ELSE 'pending' END
             WHERE id = ?
             """,
+            (error, item_id),
+        )
+        logger.warning("Queue item #%s marked failed (error: %s)", item_id, error)
+
+    def increment_retry(self, item_id: int, error: str) -> int:
+        """
+        Increment retry_count and store last_error.
+        Returns the new retry_count.
+        """
+        row = self._fetchone("SELECT retry_count FROM queue WHERE id = ?", (item_id,))
+        current = (row["retry_count"] if row else 0) + 1
+        self._execute(
+            """
+            UPDATE queue
+            SET retry_count  = ?,
+                last_error   = ?,
+                last_attempt = datetime('now')
+            WHERE id = ?
+            """,
+            (current, error, item_id),
+        )
+        return current
+
+    def pause_item(self, item_id: int) -> bool:
+        cur = self._execute(
+            "UPDATE queue SET paused = 1 WHERE id = ? AND status = 'pending'",
             (item_id,),
         )
+        return cur.rowcount > 0
+
+    def resume_item(self, item_id: int) -> bool:
+        cur = self._execute(
+            "UPDATE queue SET paused = 0 WHERE id = ? AND status = 'pending'",
+            (item_id,),
+        )
+        return cur.rowcount > 0
 
     def delete_queue_item(self, item_id: int) -> bool:
         cur = self._execute("DELETE FROM queue WHERE id = ?", (item_id,))

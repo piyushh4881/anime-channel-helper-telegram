@@ -31,9 +31,14 @@ from handlers.scheduler_handlers import (
 from handlers.queue_handlers import (
     instant_command,
     queue_command,
+    next_command,
     delete_queue_command,
+    delete_queue_callback,
     preview_queue_command,
     clear_queue_command,
+    pause_queue_command,
+    resume_queue_command,
+    logs_command,
 )
 from handlers.channel_handlers import (
     auto_post_toggle_command,
@@ -98,6 +103,7 @@ def main() -> None:
     # ── Database ──────────────────────────────────────────────────────────
     db = Database(Config.DATABASE_PATH)
     db.initialize()
+    db.migrate()   # safe backward-compatible schema migration
 
     # ── Application ───────────────────────────────────────────────────────
     app = (
@@ -121,9 +127,13 @@ def main() -> None:
     app.add_handler(CommandHandler("stopscheduler", stop_scheduler_command))
     app.add_handler(CommandHandler("instant", instant_command))
     app.add_handler(CommandHandler("queue", queue_command))
+    app.add_handler(CommandHandler("next", next_command))
     app.add_handler(CommandHandler("deletequeue", delete_queue_command))
     app.add_handler(CommandHandler("previewqueue", preview_queue_command))
     app.add_handler(CommandHandler("clearqueue", clear_queue_command))
+    app.add_handler(CommandHandler("pausequeue", pause_queue_command))
+    app.add_handler(CommandHandler("resumequeue", resume_queue_command))
+    app.add_handler(CommandHandler("logs", logs_command))
     app.add_handler(CommandHandler("autopost", auto_post_toggle_command))
     app.add_handler(CommandHandler("setchannel", set_channel_command))
     app.add_handler(CommandHandler("listchannels", list_channels_command))
@@ -132,7 +142,12 @@ def main() -> None:
     app.add_handler(CommandHandler("broadcast", broadcast_command))
     app.add_handler(CommandHandler("admin", admin_panel_command))
 
-    # ── Callback query handler (inline keyboard buttons) ──────────────────
+    # ── Callback query handlers (inline keyboard) ─────────────────────────
+    # delete_{id} callbacks for queue item deletion (must be first for specificity)
+    app.add_handler(
+        CallbackQueryHandler(delete_queue_callback, pattern=r"^delete_\d+$")
+    )
+    # Admin panel callbacks (all other callbacks)
     app.add_handler(CallbackQueryHandler(admin_callback_handler))
 
     # ── Auto-post: catch all private media / text ─────────────────────────
