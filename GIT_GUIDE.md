@@ -42,7 +42,7 @@ git add .
 ### Step 5: Create your first commit
 Commit the files with a meaningful message:
 ```bash
-git commit -m "Initial commit: Movie Indexer Bot & Channel Migrator"
+git commit -m "Initial commit: Movie Indexer Bot"
 ```
 
 ### Step 6: Create a new repository on GitHub
