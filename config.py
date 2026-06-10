@@ -1,61 +1,146 @@
+"""Configuration loader for Telegram Channel Migrator.
+
+Reads all settings from .env file and provides typed access
+with sensible defaults for safe migration speeds.
+"""
+
 import os
+from dataclasses import dataclass, field
 from dotenv import load_dotenv
 
 load_dotenv()
 
 
+def _parse_channel(value: str, allow_empty: bool = False) -> int | str | None:
+    """Parse channel identifier — supports both integer IDs and usernames."""
+    value = value.strip()
+    if not value:
+        if allow_empty:
+            return None
+        raise ValueError("Channel identifier cannot be empty")
+    try:
+        return int(value)
+    except ValueError:
+        return value.lstrip("@")
+
+
+@dataclass(frozen=True)
 class Config:
-    """Central configuration loaded from environment variables."""
+    """Immutable configuration for the migration bot."""
 
-    # Telegram Bot Token
-    BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
+    # Telegram API
+    api_id: int = field(default_factory=lambda: int(os.getenv("API_ID", "0")))
+    api_hash: str = field(default_factory=lambda: os.getenv("API_HASH", ""))
+    session_name: str = field(
+        default_factory=lambda: os.getenv("SESSION_NAME", "telegram_migrator")
+    )
 
-    # Owner / Admin Telegram user ID (numeric)
-    OWNER_ID: int = int(os.getenv("OWNER_ID", "0"))
+    # Channels
+    source_channel: int | str = field(
+        default_factory=lambda: _parse_channel(os.getenv("SOURCE_CHANNEL", ""))
+    )
+    destination_channel: int | str = field(
+        default_factory=lambda: _parse_channel(os.getenv("DESTINATION_CHANNEL", ""))
+    )
+    log_channel: int | str | None = field(
+        default_factory=lambda: _parse_channel(
+            os.getenv("LOG_CHANNEL", ""), allow_empty=True
+        )
+    )
 
-    # Target channel(s) — comma-separated list of chat IDs or @usernames
-    CHANNELS: list[str] = [
-        ch.strip()
-        for ch in os.getenv("CHANNELS", "").split(",")
-        if ch.strip()
-    ]
+    # Delays (seconds)
+    min_delay: float = field(
+        default_factory=lambda: float(os.getenv("MIN_DELAY", "3"))
+    )
+    max_delay: float = field(
+        default_factory=lambda: float(os.getenv("MAX_DELAY", "8"))
+    )
+    batch_delay: float = field(
+        default_factory=lambda: float(os.getenv("BATCH_DELAY", "300"))
+    )
+    sub_batch_size: int = field(
+        default_factory=lambda: int(os.getenv("SUB_BATCH_SIZE", "10"))
+    )
 
-    # Database path
-    # On Railway, set DATABASE_PATH=/data/bot.db (persistent volume)
-    DATABASE_PATH: str = os.getenv("DATABASE_PATH", "bot_database.db")
+    # Rate limits
+    max_per_minute: int = field(
+        default_factory=lambda: int(os.getenv("MAX_PER_MINUTE", "8"))
+    )
+    max_per_hour: int = field(
+        default_factory=lambda: int(os.getenv("MAX_PER_HOUR", "200"))
+    )
+    max_per_day: int = field(
+        default_factory=lambda: int(os.getenv("MAX_PER_DAY", "3000"))
+    )
 
-    # Default scheduler interval in seconds
-    DEFAULT_INTERVAL: int = int(os.getenv("DEFAULT_INTERVAL", "3600"))
+    # Cooldown
+    cooldown_every: int = field(
+        default_factory=lambda: int(os.getenv("COOLDOWN_EVERY", "100"))
+    )
+    cooldown_minutes: float = field(
+        default_factory=lambda: float(os.getenv("COOLDOWN_MINUTES", "10"))
+    )
+    large_cooldown_every: int = field(
+        default_factory=lambda: int(os.getenv("LARGE_COOLDOWN_EVERY", "1000"))
+    )
+    large_cooldown_minutes: float = field(
+        default_factory=lambda: float(os.getenv("LARGE_COOLDOWN_MINUTES", "45"))
+    )
 
-    # Max retry attempts for failed sends before marking permanently failed
-    MAX_RETRIES: int = int(os.getenv("MAX_RETRIES", "3"))
+    # Modes
+    live_mode: bool = field(
+        default_factory=lambda: os.getenv("LIVE_MODE", "false").lower() == "true"
+    )
+    dry_run: bool = field(
+        default_factory=lambda: os.getenv("DRY_RUN", "false").lower() == "true"
+    )
+    batch_mode: bool = field(
+        default_factory=lambda: os.getenv("BATCH_MODE", "true").lower() == "true"
+    )
+    batch_size: int = field(
+        default_factory=lambda: int(os.getenv("BATCH_SIZE", "100"))
+    )
+    session_limit: int = field(
+        default_factory=lambda: int(os.getenv("SESSION_LIMIT", "0"))
+    )
+    session_limit_cooldown_minutes: float = field(
+        default_factory=lambda: float(os.getenv("SESSION_LIMIT_COOLDOWN_MINUTES", "0"))
+    )
 
-    # Logging level
-    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 
-    # Auto-post mode (messages sent to bot PM are auto-queued)
-    AUTO_POST_MODE: bool = os.getenv("AUTO_POST_MODE", "false").lower() == "true"
+    # Database
+    database_path: str = field(
+        default_factory=lambda: os.getenv("DATABASE_PATH", "migration.db")
+    )
 
-    # Parse mode: "HTML" or "Markdown"
-    PARSE_MODE: str = os.getenv("PARSE_MODE", "HTML")
+    # Logging
+    log_level: str = field(
+        default_factory=lambda: os.getenv("LOG_LEVEL", "INFO").upper()
+    )
 
-    # Log retention days
-    LOG_RETENTION_DAYS: int = int(os.getenv("LOG_RETENTION_DAYS", "7"))
-
-    # Number of items shown by /previewqueue
-    PREVIEW_COUNT: int = int(os.getenv("PREVIEW_COUNT", "3"))
-
-    @classmethod
-    def validate(cls) -> None:
-        """Validate that all required config values are set."""
+    def validate(self) -> None:
+        """Validate critical configuration values."""
         errors: list[str] = []
-        if not cls.BOT_TOKEN:
-            errors.append("BOT_TOKEN is not set.")
-        if cls.OWNER_ID == 0:
-            errors.append("OWNER_ID is not set.")
-        if not cls.CHANNELS:
-            errors.append("CHANNELS is not set (provide at least one channel).")
+        if not self.api_id:
+            errors.append("API_ID is required")
+        if not self.api_hash:
+            errors.append("API_HASH is required")
+        if not self.source_channel:
+            errors.append("SOURCE_CHANNEL is required")
+        if not self.destination_channel:
+            errors.append("DESTINATION_CHANNEL is required")
+        if self.min_delay < 1:
+            errors.append("MIN_DELAY should be >= 1 second for account safety")
+        if self.max_delay < self.min_delay:
+            errors.append("MAX_DELAY must be >= MIN_DELAY")
         if errors:
             raise ValueError(
-                "Configuration errors:\n" + "\n".join(f"  • {e}" for e in errors)
+                "Configuration errors:\n" + "\n".join(f"  - {e}" for e in errors)
             )
+
+
+def load_config() -> Config:
+    """Load and validate configuration."""
+    config = Config()
+    config.validate()
+    return config

@@ -1,0 +1,17 @@
+version: "3.8"
+
+services:
+  bot:
+    build: .
+    container_name: instagram_scheduler_bot
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - bot_data:/app/data
+      - bot_downloads:/app/downloads
+
+volumes:
+  bot_data:
+  bot_downloads:

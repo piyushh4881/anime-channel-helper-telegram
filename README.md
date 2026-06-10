@@ -1,81 +1,68 @@
-# 🤖 Telegram Scheduler Bot
+# Telegram Channel Migrator
 
-A **production-ready** Telegram automation bot for scheduling and posting messages to channels. Built with `python-telegram-bot` v21+, APScheduler, and SQLite.
+A robust Python userbot that performs **safe, resumable migration** of all media and files from one Telegram channel to another — without showing "Forwarded From" attribution.
 
----
-
-## ✨ Features
-
-| Feature | Description |
-|---|---|
-| **Owner-Only Access** | All commands restricted to a single admin via `OWNER_ID` |
-| **Message Scheduler** | Auto-post queued messages at configurable intervals |
-| **Multi-Channel Support** | Post to multiple Telegram channels simultaneously |
-| **Auto-Post Mode** | Send anything to the bot PM → automatically queued |
-| **Instant Forward** | Skip the queue — forward messages immediately |
-| **Media Support** | Photos, videos, documents, captions, media groups |
-| **Queue Management** | Preview, delete, clear, and inspect queued items |
-| **Admin Panel** | Inline keyboard panel with live controls |
-| **Broadcast** | Send announcements to all registered users |
-| **Randomized Intervals** | Add jitter to posting times to appear natural |
-| **Persistent State** | Scheduler state survives restarts |
-| **Railway Ready** | Deploy to Railway with zero configuration changes |
+Built with [Telethon](https://github.com/LonamiWebs/Telethon), designed to handle channels with **tens of thousands of files** over multi-day migrations without losing progress or triggering Telegram anti-spam restrictions.
 
 ---
 
-## 📁 Project Structure
+## Features
+
+- **Full historical migration** — scans from oldest to newest message
+- **Resume support** — saves progress after every transfer; never restarts from scratch
+- **Album preservation** — detects and reconstructs media groups (albums)
+- **Caption cleanup** — removes DDL references while preserving Telegram formatting
+- **No forwarding attribution** — reposts appear as original content
+- **Multi-tier rate limiting** — per-minute, per-hour, per-day limits
+- **FloodWait handling** — sleeps exactly as long as Telegram requires
+- **Exponential backoff** — retries with increasing delays on errors
+- **Periodic cooldowns** — automatic pauses after every N files
+- **Live monitoring** — watches for new uploads after migration completes
+- **Dry-run mode** — scan and log without sending anything
+- **SQLite state** — complete migration database with checksums and dedup
+- **Structured logging** — console + file logs with progress statistics
+
+---
+
+## Project Structure
 
 ```
-telegram_scheduler_bot/
-├── bot.py                          # Main entry point
-├── config.py                       # Environment config loader
-├── handlers/
-│   ├── __init__.py
-│   ├── start.py                    # /start, /help
-│   ├── scheduler_handlers.py       # /setinterval, /startscheduler, /stopscheduler
-│   ├── queue_handlers.py           # /queue, /deletequeue, /clearqueue, /instant
-│   ├── channel_handlers.py         # /setchannel, /autopost, auto-queue logic
-│   ├── stats_handlers.py           # /stats
-│   ├── broadcast.py                # /broadcast
-│   └── admin.py                    # /admin inline panel
-├── database/
-│   ├── __init__.py
-│   └── db.py                       # SQLite database layer
-├── scheduler/
-│   ├── __init__.py
-│   └── scheduler.py                # APScheduler wrapper
-├── utils/
-│   ├── __init__.py
-│   ├── decorators.py               # @owner_only access control
-│   ├── formatting.py               # HTML/Markdown formatting
-│   └── helpers.py                  # Interval parsing, uptime, cleanup
-├── requirements.txt
-├── Procfile                        # Railway/Heroku process file
-├── runtime.txt                     # Python version specifier
-├── .env.example                    # Template for environment variables
-├── .gitignore
-└── README.md
+project/
+├── bot.py                 # Entry point — CLI & orchestration
+├── config.py              # Configuration loader (.env → dataclass)
+├── migrator.py            # Core migration engine
+├── caption_processor.py   # DDL cleanup & entity processing
+├── album_handler.py       # Album detection & reconstruction
+├── rate_limiter.py        # Flood control & rate limiting
+├── database.py            # SQLite state persistence
+├── progress_tracker.py    # Real-time progress display
+├── logger.py              # Structured logging setup
+├── .env.example           # Configuration template
+├── requirements.txt       # Python dependencies
+└── README.md              # This file
 ```
 
 ---
 
-## 🚀 Quick Start
+## Prerequisites
 
-### Prerequisites
+- **Python 3.11** or newer
+- A Telegram **user account** (not a bot account)
+- **API credentials** from [https://my.telegram.org](https://my.telegram.org)
+- Admin/post access to the **destination channel**
+- Read access to the **source channel**
 
-- Python 3.11+
-- A Telegram Bot Token (from [@BotFather](https://t.me/BotFather))
-- Your Telegram User ID (from [@userinfobot](https://t.me/userinfobot))
-- A Telegram channel where the bot is an admin
+---
 
-### 1. Clone the Repository
+## Installation
+
+### 1. Clone or download this project
 
 ```bash
-git clone https://github.com/your-username/telegram_scheduler_bot.git
-cd telegram_scheduler_bot
+cd telegram-migrator
 ```
 
-### 2. Create Virtual Environment
+### 2. Create a virtual environment
 
 ```bash
 python -m venv venv
@@ -83,256 +70,234 @@ python -m venv venv
 # Windows
 venv\Scripts\activate
 
-# macOS / Linux
+# Linux/macOS
 source venv/bin/activate
 ```
 
-### 3. Install Dependencies
+### 3. Install dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 4. Configure Environment
+### 4. Configure environment
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` with your values:
+Edit `.env` with your settings:
 
 ```env
-BOT_TOKEN=123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
-OWNER_ID=123456789
-CHANNELS=@your_channel,-1001234567890
+API_ID=12345678
+API_HASH=abcdef1234567890abcdef1234567890
+SESSION_NAME=telegram_migrator
+
+SOURCE_CHANNEL=-1001234567890
+DESTINATION_CHANNEL=-1009876543210
+
+MIN_DELAY=3
+MAX_DELAY=8
+MAX_PER_MINUTE=8
+MAX_PER_HOUR=200
+MAX_PER_DAY=3000
+
+COOLDOWN_EVERY=100
+COOLDOWN_MINUTES=10
+LARGE_COOLDOWN_EVERY=1000
+LARGE_COOLDOWN_MINUTES=45
+
+LIVE_MODE=false
+DRY_RUN=false
+DATABASE_PATH=migration.db
+LOG_LEVEL=INFO
 ```
 
-### 5. Run the Bot
+#### Finding channel IDs
+
+- **Username**: Use the channel's `@username` (without `@`)
+- **Channel ID**: Forward a message from the channel to [@userinfobot](https://t.me/userinfobot) or use the channel URL format `-100XXXXXXXXXX`
+
+---
+
+## Usage
+
+### First run — authenticate
 
 ```bash
 python bot.py
 ```
 
----
+On the first run, Telethon will prompt for your **phone number** and **verification code**. This creates a session file that persists for future runs.
 
-## 📋 Command Reference
-
-### General
-| Command | Description |
-|---|---|
-| `/start` | Register and show welcome message |
-| `/help` | Show all available commands |
-
-### Scheduler
-| Command | Description |
-|---|---|
-| `/setinterval <time>` | Set posting interval (e.g., `30s`, `5m`, `2h`, `1d`, `1h30m`) |
-| `/startscheduler` | Start automatic posting |
-| `/stopscheduler` | Stop automatic posting |
-
-### Queue
-| Command | Description |
-|---|---|
-| `/queue` | Show all pending messages |
-| `/previewqueue` | Preview the next message to be sent |
-| `/deletequeue <id>` | Remove a specific item by ID |
-| `/clearqueue` | Clear all pending items |
-| `/instant` | Immediately send the next queued item |
-
-### Channels
-| Command | Description |
-|---|---|
-| `/setchannel <id>` | Add a target channel |
-| `/listchannels` | List all target channels |
-| `/removechannel <id>` | Remove a target channel |
-
-### Modes
-| Command | Description |
-|---|---|
-| `/autopost` | Toggle auto-queue mode (PM → queue) |
-
-### Admin
-| Command | Description |
-|---|---|
-| `/stats` | Show bot statistics |
-| `/admin` | Open admin control panel |
-| `/broadcast <msg>` | Broadcast message to all users |
-
----
-
-## ⚙️ Admin Panel
-
-The `/admin` command opens an interactive inline keyboard panel with:
-
-- ▶️/⏹ **Start/Stop Scheduler**
-- ✅/❌ **Toggle Auto-Post**
-- ⚡/❌ **Toggle Instant Forward**
-- 🎲/❌ **Toggle Randomized Intervals**
-- 🗑 **Clear Queue**
-- 📋 **View Recent Logs**
-- 🔄 **Refresh Panel**
-
----
-
-## 🔄 Auto-Post Mode
-
-When **Auto-Post** is enabled:
-
-1. Send any message (text, photo, video, document) to the bot's PM
-2. It gets automatically added to the queue
-3. The scheduler posts items one-by-one to your channels
-
-### Instant Forward Mode
-
-When **Instant Forward** is also enabled:
-- Messages skip the queue entirely
-- They are forwarded to channels immediately upon receipt
-
----
-
-## 📊 Database Schema
-
-| Table | Purpose |
-|---|---|
-| `users` | Stores all users who used `/start` |
-| `queue` | Message queue with media type, content, file IDs, status |
-| `stats` | Aggregated send/fail counts |
-| `settings` | Key-value persistent settings |
-| `logs` | Activity logs with auto-cleanup |
-| `channels` | Dynamically added target channels |
-
----
-
-## 🚂 Railway Deployment
-
-### Step 1: Push to GitHub
+### Standard migration (with resume)
 
 ```bash
-git init
-git add .
-git commit -m "Initial commit"
-git branch -M main
-git remote add origin https://github.com/your-username/telegram_scheduler_bot.git
-git push -u origin main
+python bot.py
 ```
 
-### Step 2: Create Railway Project
+If interrupted (Ctrl+C, crash, power outage), simply run again — it resumes from the last successfully migrated message.
 
-1. Go to [railway.app](https://railway.app) and sign in with GitHub
-2. Click **"New Project"** → **"Deploy from GitHub repo"**
-3. Select your `telegram_scheduler_bot` repository
-
-### Step 3: Set Environment Variables
-
-In the Railway dashboard, go to **Variables** and add:
-
-| Variable | Value |
-|---|---|
-| `BOT_TOKEN` | Your bot token from BotFather |
-| `OWNER_ID` | Your Telegram user ID |
-| `CHANNELS` | `@channel1,-100123456` |
-| `DATABASE_PATH` | `bot_database.db` |
-| `DEFAULT_INTERVAL` | `3600` |
-| `AUTO_POST_MODE` | `false` |
-| `PARSE_MODE` | `HTML` |
-| `MAX_RETRIES` | `3` |
-| `LOG_LEVEL` | `INFO` |
-| `LOG_RETENTION_DAYS` | `7` |
-
-### Step 4: Configure Build
-
-Railway will auto-detect the `Procfile`:
-```
-worker: python bot.py
-```
-
-> ⚠️ Make sure the service type is set to **Worker** (not Web) since this bot uses polling, not webhooks.
-
-### Step 5: Deploy
-
-Click **Deploy** — Railway will install dependencies and start the bot.
-
-### Persistent Storage (Optional)
-
-For SQLite persistence across deploys, attach a **Railway Volume**:
-
-1. In your service settings, click **"Add Volume"**
-2. Mount path: `/data`
-3. Update `DATABASE_PATH` env var to `/data/bot_database.db`
-
----
-
-## 🐳 Docker Deployment (Alternative)
-
-```dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-CMD ["python", "bot.py"]
-```
+### Dry run — scan without sending
 
 ```bash
-docker build -t telegram-scheduler-bot .
-docker run -d --env-file .env telegram-scheduler-bot
+python bot.py --dry-run
+```
+
+Scans the entire source channel, logs what would be migrated, but sends nothing. Useful for estimating migration scope.
+
+### Retry failed messages
+
+```bash
+python bot.py --retry
+```
+
+Re-attempts all previously failed migrations.
+
+### Live monitoring only
+
+```bash
+python bot.py --live-only
+```
+
+Skips historical migration and immediately starts watching for new uploads.
+
+### View statistics
+
+```bash
+python bot.py --stats
+```
+
+Shows migration counts, errors, and progress from the database.
+
+---
+
+## Rate Limiting & Safety
+
+### Recommended settings by risk level
+
+| Setting | Conservative | Moderate | Aggressive |
+|---------|-------------|----------|------------|
+| `MAX_PER_MINUTE` | 5 | 8 | 15 |
+| `MAX_PER_HOUR` | 120 | 200 | 400 |
+| `MAX_PER_DAY` | 2000 | 3000 | 5000 |
+| `MIN_DELAY` | 5s | 3s | 1s |
+| `MAX_DELAY` | 12s | 8s | 3s |
+| `COOLDOWN_EVERY` | 50 | 100 | 200 |
+| `COOLDOWN_MINUTES` | 15 | 10 | 5 |
+
+> **⚠️ Start with Conservative settings**, especially for new accounts or first runs. If you encounter FloodWait errors, **immediately increase delays**. Telegram monitors activity spikes and may restrict accounts.
+
+### How the safety system works
+
+1. **Random delays** between each send (MIN_DELAY to MAX_DELAY)
+2. **Sliding-window rate limits** — per-minute, per-hour, per-day
+3. **Regular cooldowns** — e.g., pause 10 min after every 100 files
+4. **Large cooldowns** — e.g., pause 45 min after every 1000 files
+5. **FloodWait compliance** — sleeps exactly the requested duration + buffer
+6. **Exponential backoff** — 5s → 10s → 20s → 40s → ... up to 5 min on errors
+7. **Auto-abort** — stops after 20 consecutive errors (safety kill switch)
+
+### Expected migration speed
+
+| Setting | Files/hour | 10K files | 50K files |
+|---------|-----------|-----------|-----------|
+| Conservative | ~100 | ~4 days | ~20 days |
+| Moderate | ~180 | ~2.5 days | ~12 days |
+| Aggressive | ~350 | ~1.5 days | ~6 days |
+
+---
+
+## Database
+
+Migration state is stored in SQLite (`migration.db` by default).
+
+### Tables
+
+**migrations** — records every processed message:
+| Column | Type | Description |
+|--------|------|-------------|
+| `source_message_id` | INTEGER (PK) | Original message ID |
+| `destination_message_id` | INTEGER | New message ID in destination |
+| `media_type` | TEXT | photo, video, document, audio, etc. |
+| `album_group_id` | INTEGER | Grouped ID for albums |
+| `migrated_at` | TEXT | ISO timestamp |
+| `status` | TEXT | success, error, skipped:reason, dry_run |
+| `checksum` | TEXT | MD5 for duplicate detection |
+
+**state** — key-value store for misc state.
+
+### Inspecting the database
+
+```bash
+sqlite3 migration.db "SELECT status, COUNT(*) FROM migrations GROUP BY status;"
 ```
 
 ---
 
-## 🔒 Security
+## Caption Cleanup
 
-- ✅ All secrets loaded from environment variables
-- ✅ No hardcoded tokens or IDs
-- ✅ `@owner_only` decorator on every command
-- ✅ Unauthorized users are silently ignored
-- ✅ `.env` file excluded via `.gitignore`
+The migrator automatically removes DDL references from captions:
 
----
+- Text containing "DDL" (case-insensitive)
+- Hyperlinks with DDL in the URL or display text
+- Markdown links: `[DDL Link](https://...)`
+- HTML links: `<a href="...">DDL</a>`
+- Plain-text DDL URLs
+- Multiple DDL occurrences
 
-## 🛠️ Development
-
-### Adding a New Command
-
-1. Create a handler function in `handlers/`:
-   ```python
-   from utils.decorators import owner_only
-
-   @owner_only
-   async def my_command(update, context):
-       await update.message.reply_text("Hello!")
-   ```
-
-2. Register it in `bot.py`:
-   ```python
-   app.add_handler(CommandHandler("mycommand", my_command))
-   ```
-
-### Interval Format Reference
-
-| Input | Seconds |
-|---|---|
-| `30` or `30s` | 30 |
-| `5m` | 300 |
-| `2h` | 7,200 |
-| `1d` | 86,400 |
-| `1h30m` | 5,400 |
+All other Telegram formatting (bold, italic, code, spoilers, custom emoji, etc.) is preserved.
 
 ---
 
-## 📝 License
+## Album Handling
 
-MIT License — use freely for personal and commercial projects.
+Media groups (albums) are detected by `grouped_id` and reconstructed in the destination:
+
+- Album order is preserved
+- Captions are maintained (typically on the first item)
+- If grouped send fails, items are sent individually as fallback
+- Album boundaries are detected even across pagination
 
 ---
 
-## 🤝 Contributing
+## Logging
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+Logs are written to both **console** (with emoji indicators) and **file** (in `logs/` directory).
+
+Log events include:
+- Startup & configuration
+- Channel access validation
+- Progress restoration from database
+- Each file detection & migration
+- Caption modifications
+- Album detection & reconstruction
+- FloodWait encounters
+- Cooldown start/end
+- Retry attempts
+- Fatal errors
+
+---
+
+## Troubleshooting
+
+### "FloodWaitError: A wait of X seconds is required"
+This is normal. The bot automatically sleeps and resumes. If it happens frequently, increase `MIN_DELAY`, `MAX_DELAY`, and reduce `MAX_PER_MINUTE`.
+
+### "Cannot access source/destination channel"
+Ensure your user account has joined or been added to both channels. For the destination, you need admin/post permissions.
+
+### "SessionPasswordNeededError"
+Your account has 2FA enabled. Enter your password when prompted.
+
+### Migration seems stuck
+Check `logs/` for the latest log file. The bot may be in a cooldown period or waiting for a FloodWait to expire.
+
+### Want to start over
+Delete `migration.db` to reset all progress. The session file keeps your Telegram login.
+
+---
+
+## License
+
+This project is provided as-is for personal use. Use responsibly and in compliance with Telegram's Terms of Service.
