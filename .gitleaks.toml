@@ -1,0 +1,8 @@
+[allowlist]
+description = "Allow known documentation-only placeholder from initial README example"
+regexes = [
+  '''API_HASH=abcdef1234567890abcdef1234567890'''
+]
+paths = [
+  '''README\.md'''
+]
